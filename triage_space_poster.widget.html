@@ -1,0 +1,173 @@
+<!-- 
+	triage_space_poster.widget.html
+	By: Tommy Farley <tommy_farley@apple.com>
+	https://github.pie.apple.com/Gather-Guardians/Triage-Space-Poster
+	
+	Loads and modifies a Gather "Create Page" into a Modal Window to aid in routing posts to a locked down "triage space"
+	
+	See the parent.triage_poster_settings JSON object below for settings to configure
+-->
+<script type="text/javascript">
+	parent.triage_poster_settings = {
+		// button_selector should be an item on the main page (as in not in an iframe rendered widget)
+		button_selector: '#css_selector_of_the_button_you_want_to_trigger_the_triage_modal',
+		// URL to the Create Page you want to use on Gather
+		url: "https://url_to_your_create_page_on_gather",
+		// afterpost_target is called using jQuery.load which means you can specify a CSS selector on the page you're loading
+		// 		An example would be: https://gather.corp.apple.com/docs/DOC-76854 section.jive-content-body
+		// 		This loads *only* the document's body from https://gather.corp.apple.com/docs/DOC-76854
+		afterpost_target: "https://url_to_content_to_load_after_a_post css_selector_for_the_section_of_that_page_you_want_to_load",
+		// template specifies the HTML content you want to include in the WYSIWYG editor
+		template: `<p>This shows up in the WYSIWYG editor</p>`,
+		// header_text specifies a replacement heading for the Create Page you are loading
+		// 		Set this value to null if you want to use the default heading for the create page
+		header_text: '<span class="jive-icon-big jive-icon-idea"></span> Heading You Want To Use In Your Modal',
+		// loading_text is the content of the Loading Screen shown while the iframe renders
+		loading_text: '<p>Loading...</p>',
+		// posting_text is the content of the Loading Screen shown while the content posts until it is replaced by afterpost_target
+		posting_text: '<p>Submitting your post.  Please wait...</p>'
+	};
+
+	var widgetParent = window.frameElement.parentNode.parentNode;
+	
+	// Build Stylesheet
+	var triageStyles = document.createElement('style');
+	triageStyles.type = "text/css";
+	triageStyles.innerHTML = `
+		/* Main Modal Window */
+		#triage-modal {
+			max-width: 1010px;
+			max-height: 90vh;
+			box-shadow: 0 0 5px 0 rgba(0, 0, 0, .75);
+		}
+		/* "Loading Screen" that covers the IFRAME while it is rendered */
+		#triage-loading {
+			position: absolute;
+			top: 0px;
+			left: 0px;
+			width: 100%;
+			height: 100%;
+			text-align: center;
+			background-color: white;
+		}
+		/* Content on the Loading Screen */
+		#triage-loading > div {
+			position: relative;
+			top: 25%;
+			transform: translateY(-75%);
+			font-size: xx-large;
+		}
+		/* IFRAME that holds the Create Page */
+		#triage-iframe {
+			width: 1010px;
+			height: 90vh;
+			offsetX: hidden;
+			offsetY: scroll;
+			padding: 0px;
+		}
+	`;
+
+	widgetParent.appendChild(triageStyles);
+	
+	function openTriageSpaceModal() {
+		// Build Modal
+		var triageModal = document.createElement('div');
+		triageModal.id = "triage-modal";
+		triageModal.className = "jive-modal";
+		
+		// Build Modal Loading Screen, contents can be updated in "triage_poster_settings"
+		var triageLoading = document.createElement('div');
+		triageLoading.id = "triage-loading";
+		triageLoading.innerHTML = '<div>'+parent.triage_poster_settings.loading_text+'</div>';
+		
+		triageModal.appendChild(triageLoading);
+		
+		// Build IFRAME, src can be updated in "triage_poster_settings"
+		var triageIframe = document.createElement('iframe');
+		triageIframe.id = "triage-iframe";
+		triageIframe.frameborder = "0";
+		triageIframe.src = parent.triage_poster_settings.url;
+		
+		parent.$j(triageIframe).on('load',function() {
+			// If the page loads again and the SRC is not the original, we can assume a post has occurred
+			if(this.contentWindow.location.href !== this.src) {
+				this.contentDocument.body.style.display = 'none';
+				parent.$j('#triage-modal').load(parent.triage_poster_settings.afterpost_target);
+				parent.$j('#triage-iframe').off('load');
+			}
+			
+			// Modifications to the Create page
+			parent.$j('#top',this.contentDocument).remove();
+			parent.$j('#j-header-wrap',this.contentDocument).remove();
+			parent.$j('#j-footer-wrap',this.contentDocument).remove();
+			parent.$j('button[data-submit-id="cancel"]',this.contentDocument).remove();
+			parent.$j('button[data-submit-id="draft"]',this.contentDocument).remove();
+			
+			if(parent.triage_poster_settings.header_text !== null && parent.triage_poster_settings.header_text !== "null") {
+				parent.$j('header',this.contentDocument).html('<h2>'+parent.triage_poster_settings.header_text+'</h2>');
+			}
+			
+			// Ensure all links in the modal open in a new Window
+			parent.$j('#triage-iframe').contents().find('head').prepend( '<base target="_blank" />' );
+			
+			// Clear Loading Screen
+			parent.$j('#triage-loading')[0].style.display = "none";
+			
+			// Add additional listener to cover the iframe during a Publish, so the destination and likely error isn't shown
+			parent.$j(this.contentWindow).on('beforeunload',function() {
+				parent.$j('#triage-loading')[0].innerHTML = '<div>'+parent.triage_poster_settings.posting_text+'</div>';
+				parent.$j('#triage-loading')[0].style.display = "unset";
+			});
+			
+			// This loads the template into the WYSIWYG editor, checking for the TinyMCE iframe for up to 10 seconds
+			parent.$j('#triage-iframe')[0].contentWindow.wysiwygTemplate = function() {
+				frame = parent.$j('#triage-iframe')[0].contentWindow;
+				if(frame.tinyMCE !== undefined && frame.tinyMCE.getInstanceById('wysiwygtext') !== undefined && frame.tinyMCE.getInstanceById('wysiwygtext').initialized) {
+					frame.tinyMCE.getInstanceById('wysiwygtext').getBody().innerHTML = '<p>'+parent.triage_poster_settings.template+'</p>';
+					clearInterval(frame.wysiwygTemplate_interval);
+					clearTimeout(frame.wysiwygTemplate_intervalTimeout);
+				}
+			}
+			
+			// Interval and clearInterval Timeout to keep trying to push the WYSIWYG Template
+			this.contentWindow.wysiwygTemplate_interval = setInterval(parent.$j('#triage-iframe')[0].contentWindow.wysiwygTemplate,500);
+			this.contentWindow.wysiwygTemplate_intervalTimeout = setTimeout(function() {
+				// Attempt to clear timeout, *should* already be clear by this point
+				try {
+					clearInterval(parent.$j('#triage-iframe')[0].contentWindow.wysiwygTemplate_interval);
+				} catch(e) { return true; }
+			},10000);
+		});
+		triageModal.appendChild(triageIframe);
+		widgetParent.appendChild(triageModal);
+		
+		// Trigger the Lightbox
+		parent.$j('#triage-modal').lightbox_me({
+			destroyOnClose: true,
+			closeClick: false,
+			closeEsc: false,
+			overlayCSS: {
+				background: 'transparent',
+				'backdrop-filter': 'blur(10px)',
+				'-webkit-backdrop-filter': 'blur(10px)'
+			},
+			onLoad: function() {
+				// Handles the "Are you sure you want to close" prompt
+				parent.$j('.lb_overlay').on('click',function() {
+					if(parent.$j('#triage-iframe')[0] === undefined || confirm("Are you sure you want to close?  All unsaved data will be lost.")) {
+						parent.$j('#triage-iframe').off('load');
+						parent.$j('#triage-modal').trigger('close');
+					}
+				});
+			},
+			onClose: function() {
+				parent.$j('.lb_overlay').off('click');
+			}
+		});
+	}
+	
+	// Button Listener, selector is specified in triage_poster_settings at top
+	parent.$j(parent.triage_poster_settings.button_selector).on('click',function() {
+		openTriageSpaceModal();
+	});
+</script>
